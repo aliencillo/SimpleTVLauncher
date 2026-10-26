@@ -109,5 +109,9 @@
   "Mostrar iconos: ": "Symbole anzeigen: ",
   "Estilo de selección: ": "Auswahlstil: ",
   "zoom": "Zoom",
-  "selector": "Markierung"
+  "selector": "Markierung",
+  "Posición del panel: ": "Panelposition: ",
+  "Guardar": "Speichern",
+  "Derecha": "Rechts",
+  "Izquierda": "Links"
 }

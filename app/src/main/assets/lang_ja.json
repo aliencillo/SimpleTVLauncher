@@ -109,5 +109,9 @@
   "Mostrar iconos: ": "アイコンを表示: ",
   "Estilo de selección: ": "選択スタイル: ",
   "zoom": "ズーム",
-  "selector": "選択枠"
+  "selector": "選択枠",
+  "Posición del panel: ": "パネルの位置：",
+  "Guardar": "保存",
+  "Derecha": "右",
+  "Izquierda": "左"
 }

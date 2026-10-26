@@ -2,7 +2,7 @@
 
 A lightweight, customizable Android TV launcher with a text-focused home screen, customizable backgrounds, local file management, and video-input shortcuts.
 
-**Version:** 1.9.4 (`versionCode` 35)  
+**Version:** 2.0.5 (`versionCode` 48)  
 **Platform:** Android TV / Google TV (device support varies)  
 **Source language:** Java  
 **Build:** Gradle 9.8.2 / Android Gradle Plugin 9.4.0 / Java 25 for running Gradle
@@ -92,7 +92,7 @@ Publish downloadable APKs under **GitHub Releases** only after building and test
 
 **License:** The project source code is released under the GNU General Public License v3.0 only (`GPL-3.0-only`). See [LICENSE](LICENSE). Distribution of included third-party assets is subject to their respective rights; review asset provenance before public release.
 
-## Version 1.9.4 interface updates
+## Version 1.9.6 interface updates
 
 - Settings and other panels open from the left side of the TV.
 - A panel entry/exit transition plays only when opening or closing the panel, not when moving between settings sections.
@@ -104,6 +104,19 @@ Publish downloadable APKs under **GitHub Releases** only after building and test
 These UI changes have not been tested on physical Android TV hardware.
 
 
-### Version 1.9.4
+### Version 1.9.6
 
 Application entries now use the installed app icons supplied by Android. TV inputs display the device-provided icon when available and otherwise a distinct tuner or HDMI icon. The existing **Show icons** setting hides these icons everywhere.
+
+
+### Version 1.9.9
+- Panel position: Left (full height) or Right (compact).
+- App icons loaded from Android launchable activities and displayed in the home screen and All apps.
+- Icon visibility can be toggled; other submenus remain text-only.
+
+
+Version 2.0.1: right-hand panel and selector style are defaults on new installations; Settings displays icons; press 1 to save a screenshot of the launcher (not other apps). Starry-night wallpaper now has stars to the bottom edge. Screenshots are saved to Pictures/SimpleTVLauncher on Android 10+ or app-specific Pictures/Screenshots on older Android.
+
+
+### Version 2.0.6
+- English date uses US month-before-day order (for example, Monday, October 26). Other languages retain their date format.

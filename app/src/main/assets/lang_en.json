@@ -109,5 +109,9 @@
   "Mostrar iconos: ": "Show icons: ",
   "Estilo de selección: ": "Selection style: ",
   "zoom": "Zoom",
-  "selector": "Highlight"
+  "selector": "Highlight",
+  "Posición del panel: ": "Panel position: ",
+  "Guardar": "Save",
+  "Derecha": "Right",
+  "Izquierda": "Left"
 }

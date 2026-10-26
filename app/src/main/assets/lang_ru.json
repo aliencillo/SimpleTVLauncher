@@ -109,5 +109,9 @@
   "Mostrar iconos: ": "Показывать значки: ",
   "Estilo de selección: ": "Стиль выбора: ",
   "zoom": "Увеличение",
-  "selector": "Выделение"
+  "selector": "Выделение",
+  "Posición del panel: ": "Положение панели: ",
+  "Guardar": "Сохранить",
+  "Derecha": "Справа",
+  "Izquierda": "Слева"
 }

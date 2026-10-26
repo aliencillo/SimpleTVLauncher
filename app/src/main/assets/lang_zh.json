@@ -109,5 +109,9 @@
   "Mostrar iconos: ": "显示图标：",
   "Estilo de selección: ": "选择样式：",
   "zoom": "缩放",
-  "selector": "高亮"
+  "selector": "高亮",
+  "Posición del panel: ": "面板位置：",
+  "Guardar": "保存",
+  "Derecha": "右侧",
+  "Izquierda": "左侧"
 }

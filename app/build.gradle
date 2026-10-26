@@ -10,8 +10,8 @@ android {
         applicationId 'com.etif.simpletvlauncher'
         minSdk 21
         targetSdk 35
-        versionCode 37
-        versionName '1.9.4'
+        versionCode 50
+        versionName '2.0.7'
     }
 
     buildTypes {

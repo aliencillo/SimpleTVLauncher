@@ -109,5 +109,9 @@
   "Mostrar iconos: ": "Afficher les icônes : ",
   "Estilo de selección: ": "Style de sélection : ",
   "zoom": "Zoom",
-  "selector": "Sélecteur"
+  "selector": "Sélecteur",
+  "Posición del panel: ": "Position du panneau : ",
+  "Guardar": "Enregistrer",
+  "Derecha": "Droite",
+  "Izquierda": "Gauche"
 }

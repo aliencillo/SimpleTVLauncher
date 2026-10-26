@@ -43,6 +43,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.Toast;
 
@@ -85,7 +87,6 @@ public class MainActivity extends Activity {
         String code = pref.equals("auto") ? Locale.getDefault().getLanguage() : pref;
         displayLocale = pref.equals("auto") ? Locale.getDefault() : Locale.forLanguageTag(code);
         translations = new JSONObject();
-        if (code.equals("es")) return;
         try (InputStream in = getAssets().open("lang_" + code + ".json")) {
             byte[] bytes = new byte[in.available()];
             int read = 0, n;
@@ -117,6 +118,38 @@ public class MainActivity extends Activity {
     @Override protected void onStop() {
         super.onStop();
         stopUploadServer();
+    }
+
+    private void saveLauncherScreenshot() {
+        if (launcherView == null || launcherView.getWidth() <= 0 || launcherView.getHeight() <= 0) return;
+        try {
+            Bitmap bitmap = Bitmap.createBitmap(launcherView.getWidth(), launcherView.getHeight(), Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            launcherView.draw(canvas);
+            String name = "SimpleTVLauncher_" + new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.ROOT).format(new Date()) + "_" + Long.toString(System.nanoTime() % 1000000L) + ".png";
+            if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
+                values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+                values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SimpleTVLauncher");
+                values.put(MediaStore.Images.Media.IS_PENDING, 1);
+                Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                if (uri == null) throw new java.io.IOException("MediaStore unavailable");
+                try (OutputStream out = getContentResolver().openOutputStream(uri)) {
+                    if (out == null || !bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) throw new java.io.IOException("Screenshot write failed");
+                } catch(Exception error) {getContentResolver().delete(uri,null,null);throw error;}
+                values.clear(); values.put(MediaStore.Images.Media.IS_PENDING,0);
+                getContentResolver().update(uri,values,null,null);
+            } else {
+                File folder = new File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "Screenshots");
+                if (!folder.exists() && !folder.mkdirs()) throw new java.io.IOException("Cannot create screenshot directory");
+                try (OutputStream out = new FileOutputStream(new File(folder,name))) {
+                    bitmap.compress(Bitmap.CompressFormat.PNG,100,out);
+                }
+            }
+            bitmap.recycle();
+            toast("Screenshot saved: " + name);
+        } catch (Exception e) { toast("Screenshot error: " + e.getMessage()); }
     }
 
     private void startUploadServer() {
@@ -849,17 +882,39 @@ public class MainActivity extends Activity {
     private void askText(String title, String initial, boolean url, TextCallback callback) {
         final EditText input = new EditText(this);
         input.setText(initial);
-        input.setSelectAllOnFocus(false);
         input.setSingleLine(true);
-        input.setPadding(32, 12, 32, 12);
-        input.setInputType(url ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        input.setPadding(24, 16, 24, 16);
+        input.setInputType(url ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         input.setSelection(input.length());
-        new AlertDialog.Builder(this)
-                .setTitle(title)
+        // On Android TV the keyboard owns D-pad navigation while editing; the
+        // IME Done action must also commit the link without requiring touch.
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(tr(title))
                 .setView(input)
-                .setPositiveButton("Guardar", (d, w) -> callback.done(input.getText().toString()))
+                .setPositiveButton(tr("Guardar"), (d, w) -> callback.done(input.getText().toString()))
                 .setNegativeButton(tr("Cancelar"), null)
-                .show();
+                .create();
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE ||
+                    (event != null && event.getAction() == KeyEvent.ACTION_DOWN
+                        && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
+                if (dialog.isShowing()) dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+                return true;
+            }
+            return false;
+        });
+        dialog.getWindow();
+        dialog.setOnShowListener(d -> {
+            input.requestFocus();
+            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+            input.post(() -> {
+                InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null && dialog.isShowing()) imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+            });
+        });
+        dialog.show();
     }
 
     private List<LinkItem> loadLinks() {
@@ -1003,7 +1058,7 @@ public class MainActivity extends Activity {
             previousPanel = panel;
             switch (panel) {
                 case "settings": panel = ""; beginPanelExit(); break;
-                case "server": stopUploadServer(); panel = ""; beginPanelExit(); break;
+                case "server": stopUploadServer(); openPanel("settings"); return;
                 case "edit": case "add": openPanel("links"); return;
                 case "pickapp": openPanel(editingIndex < 0 ? "add" : "edit"); return;
                 case "links": case "background": case "font": case "size":
@@ -1038,18 +1093,19 @@ public class MainActivity extends Activity {
                 case "edit":
                     panelRows.add(tr("Cambiar por aplicación")); panelRows.add(tr("Cambiar por URL")); panelRows.add(tr("Subir")); panelRows.add(tr("Bajar")); panelRows.add(tr("Eliminar")); break;
                 case "pickapp": case "apps":
+                    preloadInstalledIcons();
                     for (AppEntry app : getLaunchableApps()) { panelRows.add(app.label); panelTargets.add(app.packageName); }
                     break;
                 case "background":
-                    Collections.addAll(panelRows,tr("Noche"), tr("Aurora"), tr("Violeta"), tr("Carbono"), tr("Océano"), tr("Negro"), tr("Montañas · imagen"), tr("Atardecer · imagen"), tr("Bosque · imagen"), "Costa · imagen", "Cordillera · imagen", "Noche estrellada · imagen", tr("Mi propia imagen…")); break;
+                    Collections.addAll(panelRows,tr("Noche"), tr("Aurora"), tr("Violeta"), tr("Carbono"), tr("Océano"), tr("Negro"), tr("Montañas · imagen"), tr("Atardecer · imagen"), "Cordillera · imagen", "Noche estrellada · imagen", tr("Mi propia imagen…")); break;
                 case "font": Collections.addAll(panelRows,"Sans", tr("Condensada"), "Serif", tr("Monoespaciada"), tr("Fuente personalizada…")); break;
                 case "size": Collections.addAll(panelRows,tr("Pequeño"), tr("Normal"), tr("Grande"), tr("Muy grande")); break;
                 case "appearance":
                     panelRows.add(tr("Transparencia: ") + (prefs.getBoolean("menu_transparency", true) ? tr("Sí") : tr("No")));
-                    panelRows.add(tr("Altura completa: ") + (prefs.getBoolean("menu_full_height", true) ? tr("Sí") : tr("No")));
+                    panelRows.add(tr("Posición del panel: ") + tr(prefs.getString("menu_side", "right").equals("right") ? "Derecha" : "Izquierda"));
                     panelRows.add(tr("Animaciones: ") + (prefs.getBoolean("menu_animations", true) ? tr("Sí") : tr("No")));
                     panelRows.add(tr("Mostrar iconos: ") + (prefs.getBoolean("menu_icons", true) ? tr("Sí") : tr("No")));
-                    panelRows.add(tr("Estilo de selección: ") + tr(prefs.getString("selection_style", "zoom")));
+                    panelRows.add(tr("Estilo de selección: ") + tr(prefs.getString("selection_style", "selector")));
                     break;
                 case "inputs":
                     refreshInputIconCache();
@@ -1069,7 +1125,7 @@ public class MainActivity extends Activity {
                     }
                     break;
                 case "clock":
-                    panelRows.add(tr("Posición de la fecha: ") + tr(prefs.getString("date_position", "top")));
+                    panelRows.add(tr("Posición de la fecha: ") + tr(prefs.getString("date_position", "bottom")));
                     panelRows.add(tr("Hora: ") + (showTime ? tr("Sí") : tr("No")));
                     panelRows.add(tr("Fecha: ") + (showDate ? tr("Sí") : tr("No")));
                     panelRows.add(tr("Segundos: ") + (showSeconds ? tr("Sí") : tr("No"))); break;
@@ -1081,7 +1137,7 @@ public class MainActivity extends Activity {
                 case "explorer": refreshExplorer(panelRows); panelSelected = 0; break;
                 case "server":
                     if (uploadServer != null) {
-                        panelRows.add(tr("Dirección: ") + uploadServer.address());
+                        panelRows.add(uploadServer.address());
                         panelRows.add(tr("Sube o descarga archivos desde el navegador"));
                     }
                     panelRows.add(tr("Detener servidor")); break;
@@ -1173,7 +1229,7 @@ public class MainActivity extends Activity {
                 case "apps": launchPackage(panelTargets.get(i)); break;
                 case "explorer": openExplorerFile(i); break;
                 case "background":
-                    if (i <= 11) { prefs.edit().putInt("bg_style",i).remove("custom_bg_uri").apply(); reloadPreferences(); }
+                    if (i <= 9) { int chosenStyle = i >= 8 ? i + 2 : i; prefs.edit().putInt("bg_style",chosenStyle).remove("custom_bg_uri").apply(); reloadPreferences(); }
                     else { Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"); intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION); try { startActivityForResult(intent, REQ_BG); } catch (Exception ex) { toast("No hay selector de imágenes"); } }
                     break;
                 case "font":
@@ -1182,14 +1238,19 @@ public class MainActivity extends Activity {
                     break;
                 case "size": prefs.edit().putInt("text_size",i).apply(); reloadPreferences(); break;
                 case "clock":
-                    if (i == 0) { String old = prefs.getString("date_position", "top"); prefs.edit().putString("date_position", "top".equals(old) ? "bottom" : "bottom".equals(old) ? "hidden" : "top").apply(); }
+                    if (i == 0) { String old = prefs.getString("date_position", "bottom"); prefs.edit().putString("date_position", "top".equals(old) ? "bottom" : "bottom".equals(old) ? "hidden" : "top").apply(); }
                     else if (i == 1) prefs.edit().putBoolean("show_time", !showTime).apply();
                     else if (i == 2) prefs.edit().putBoolean("show_date", !showDate).apply();
                     else prefs.edit().putBoolean("show_seconds", !showSeconds).apply();
                     reloadPreferences(); buildPanel(); break;
                 case "appearance":
-                    if (i == 4) { String next = "zoom".equals(prefs.getString("selection_style", "zoom")) ? "selector" : "zoom"; prefs.edit().putString("selection_style", next).apply(); buildPanel(); invalidate(); break; }
-                    String appearanceKey = i == 0 ? "menu_transparency" : i == 1 ? "menu_full_height" : i == 2 ? "menu_animations" : "menu_icons";
+                    if (i == 4) { String next = "zoom".equals(prefs.getString("selection_style", "selector")) ? "selector" : "zoom"; prefs.edit().putString("selection_style", next).apply(); buildPanel(); invalidate(); break; }
+                    if (i == 1) {
+                        String side = prefs.getString("menu_side", "right");
+                        prefs.edit().putString("menu_side", "right".equals(side) ? "left" : "right").apply();
+                        buildPanel(); invalidate(); break;
+                    }
+                    String appearanceKey = i == 0 ? "menu_transparency" : i == 2 ? "menu_animations" : "menu_icons";
                     boolean currentValue = prefs.getBoolean(appearanceKey, true);
                     prefs.edit().putBoolean(appearanceKey, !currentValue).apply();
                     buildPanel(); invalidate(); break;
@@ -1251,8 +1312,9 @@ public class MainActivity extends Activity {
 
         // Todas las ventanas comparten la misma geometría. La zona superior se
         // reserva para el reloj y la fecha; las filas quedan recortadas al panel.
-        private float panelLeft(int w) { return dp(55); }
-        private float panelTop(int h) { return prefs.getBoolean("menu_full_height", true) ? dp(24) : Math.max(dp(142), h * .21f); }
+        private boolean panelOnRight() { return "right".equals(prefs.getString("menu_side", "right")); }
+        private float panelLeft(int w) { return panelOnRight() ? Math.max(dp(40), w * .38f) : dp(55); }
+        private float panelTop(int h) { return panelOnRight() ? Math.max(dp(142), h * .21f) : dp(24); }
         private float panelBottom(int h) { return h * .94f; }
         private float panelRowHeight() { return dp("explorer".equals(panel) ? 39 : 43); }
         private float panelListTop(int h) {
@@ -1266,7 +1328,7 @@ public class MainActivity extends Activity {
         private void drawPanel(Canvas c,int w,int h) {
             if (!panelOpen()) return;
             float left = panelLeft(w), topEdge = panelTop(h), bottomEdge = panelBottom(h);
-            float rightEdge = Math.min(w * .46f, dp(640));
+            float rightEdge = panelOnRight() ? w - dp(32) : Math.min(w * .46f, dp(640));
             overlay.setColor(prefs.getBoolean("menu_transparency", true) ? 0xE6000000 : Color.BLACK);
             overlay.setShader(null);
             c.drawRoundRect(new RectF(left-dp(24),topEdge,rightEdge,bottomEdge),dp(18),dp(18),overlay);
@@ -1314,7 +1376,7 @@ public class MainActivity extends Activity {
                 float infoY = topEdge + dp(119);
                 for (int j=0; j<infoCount; j++) {
                     paint.setColor(Color.WHITE); paint.setAlpha(j==0 ? 255 : 190);
-                    paint.setTextSize(dp(j==0 ? 26 : 20));
+                    paint.setTextSize(dp(j==0 ? 20 : 20));
                     String value=panelRows.get(j);
                     while (paint.measureText(value)>available && value.length()>4)
                         value=value.substring(0,value.length()-2)+"…";
@@ -1333,23 +1395,33 @@ public class MainActivity extends Activity {
             int checkpoint=c.save();
             c.clipRect(left-dp(8),listTop-dp(27),rightEdge-dp(9),listBottom);
             for (int j=first;j<end;j++) {
-                float focus=Math.max(0f,1f-Math.abs(j-panelFocus));
+                float focus = j == panelSelected ? 1f : 0f;
                 float y=listTop+(j-panelScroll)*row;
                 if (y < listTop-row || y > listBottom+row) continue;
-                if (focus > 0.02f && "selector".equals(prefs.getString("selection_style", "zoom"))) {
-                    overlay.setShader(null); overlay.setColor(0x688D9BAA);
-                    c.drawRoundRect(left-dp(8), y-dp(28), rightEdge-dp(9), y+dp(13),dp(7),dp(7),overlay);
-                }
                 paint.setTypeface(typeface);paint.setTextAlign(Paint.Align.LEFT);
                 paint.setColor(Color.WHITE);paint.setAlpha((int)(150+focus*105));
-                boolean zoomRows = !"selector".equals(prefs.getString("selection_style", "zoom"));
+                boolean zoomRows = !"selector".equals(prefs.getString("selection_style", "selector"));
                 paint.setTextSize(dp("explorer".equals(panel)?(17f+(zoomRows?3f*focus:0f)):(22f+(zoomRows?5f*focus:0f))));
                 String value=panelRows.get(j);
-                float maxWidth=rightEdge-left-dp(prefs.getBoolean("menu_icons", true) ? 59 : 23);
+                float maxWidth=rightEdge-left-dp(23);
                 while(paint.measureText(value)>maxWidth && value.length()>4)
                     value=value.substring(0,value.length()-2)+"…";
-                boolean icons = prefs.getBoolean("menu_icons", true);
-                if (icons) drawRowIcon(c, left + dp(12), y - dp(9), j);
+                boolean icons = ("apps".equals(panel) || "settings".equals(panel)) && prefs.getBoolean("menu_icons", true); // Main settings and installed apps have icons; deeper submenus are text-only.
+                if (focus > 0.5f && "selector".equals(prefs.getString("selection_style", "selector"))) {
+                    float textX = left + (icons ? dp(36) : 0);
+                    float textEnd = Math.min(rightEdge - dp(10), textX + paint.measureText(value) + dp(12));
+                    float highlightLeft = left - dp(8);
+                    overlay.setShader(null); overlay.setColor(0x688D9BAA);
+                    Paint.FontMetrics fm = paint.getFontMetrics();
+                    c.drawRoundRect(highlightLeft, y + fm.ascent - dp(9),
+                        Math.max(highlightLeft + dp(35), textEnd), y + fm.descent + dp(9), dp(7), dp(7), overlay);
+                }
+                if (icons) {
+                    float appIconY = y + (paint.getFontMetrics().ascent + paint.getFontMetrics().descent) * 0.5f;
+                    if ("settings".equals(panel)) drawSettingsIcon(c, left + dp(12), appIconY, j);
+                    else if (j < panelTargets.size() && !drawInstalledIcon(c, panelTargets.get(j), left + dp(12), appIconY))
+                        drawAppFallback(c, left + dp(12), appIconY, panelRows.get(j));
+                }
                 c.drawText(value,left+(icons ? dp(36) : 0),y,paint);
             }
             c.restoreToCount(checkpoint);
@@ -1358,9 +1430,43 @@ public class MainActivity extends Activity {
             c.drawText(tr("OK seleccionar  ·  BACK volver"),left,bottomEdge-dp(30),paint);
         }
 
+
+        private void drawSettingsIcon(Canvas c, float x, float y, int index) {
+            // Compact geometric symbols, drawn without font glyph dependencies.
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setColor(0xFFEAEAEA); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(dp(2));
+            float r=dp(9);
+            if (index==1) { c.drawRect(x-r,y-r*.7f,x+r,y+r*.7f,p); c.drawLine(x-r,y+r*.35f,x-r*.3f,y-dp(2),p); c.drawLine(x-r*.3f,y-dp(2),x+r*.2f,y+r*.35f,p); }
+            else if (index==2 || index==3) { p.setStyle(Paint.Style.FILL);p.setTextSize(dp(17));p.setTextAlign(Paint.Align.CENTER);c.drawText(index==2?"Aa":"T",x,y+dp(6),p); }
+            else if (index==4) { c.drawCircle(x,y,r,p);c.drawLine(x,y,x,y-r*.55f,p);c.drawLine(x,y,x+r*.5f,y,p); }
+            else if (index==7) { c.drawArc(x-r,y-r,x+r,y+r,205,130,false,p); c.drawArc(x-r,y-r,x+r,y+r,25,130,false,p); }
+            else if (index==8) { c.drawRect(x-r,y-r*.6f,x+r,y+r*.65f,p);c.drawLine(x-r,y-r*.6f,x-dp(3),y-r,p); }
+            else if (index==11) { c.drawArc(x-r,y-r,x+r,y+r,65,285,false,p); c.drawLine(x-r,y-r*.5f,x-r,y+r*.25f,p); }
+            else if (index==12) { c.drawCircle(x,y,r,p);c.drawLine(x,y-dp(1),x,y+dp(6),p);c.drawCircle(x,y-dp(5),dp(1),p); }
+            else if (index==9) { for(int k=-1;k<=1;k++){float yy=y+k*dp(6);c.drawLine(x-r,yy,x+r,yy,p);c.drawCircle(x+(k==0?dp(4): -dp(3)),yy,dp(2),p);} }
+            else if (index==10 || index==5) {c.drawRect(x-r,y-r*.7f,x+r,y+r*.45f,p);c.drawLine(x-dp(4),y+r,x+dp(4),y+r,p);}
+            else if (index==6) {c.drawCircle(x,y,r,p);c.drawOval(x-dp(4),y-r,x+dp(4),y+r,p);c.drawLine(x-r,y,x+r,y,p);}
+            else {c.drawCircle(x,y,r,p);c.drawCircle(x,y,dp(3),p);}
+        }
+
         // Draw installed application icons supplied by Android. Cache them so scrolling
         // never performs a PackageManager lookup or decodes a drawable per frame.
         private final Map<String, Drawable> installedIcons = new HashMap<>();
+        private void preloadInstalledIcons() {
+            PackageManager pm = getPackageManager();
+            for (String category : new String[]{Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER}) {
+                Intent query = new Intent(Intent.ACTION_MAIN).addCategory(category);
+                for (ResolveInfo entry : pm.queryIntentActivities(query, 0)) {
+                    if (entry.activityInfo == null) continue;
+                    String pkg = entry.activityInfo.packageName;
+                    if (installedIcons.containsKey(pkg)) continue;
+                    try {
+                        Drawable icon = entry.loadIcon(pm);
+                        if (icon != null) installedIcons.put(pkg, icon.mutate());
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
         private final Set<String> missingInstalledIcons = new HashSet<>();
         private boolean drawInstalledIcon(Canvas c, String pkg, float x, float y) {
             if (pkg == null || pkg.isEmpty()) return false;
@@ -1422,6 +1528,35 @@ public class MainActivity extends Activity {
                 c.drawLine(x-dp(7), y+dp(11), x+dp(7), y+dp(11), iconPaint);
             }
         }
+        private void drawAppFallback(Canvas c,float x,float y,String label) {
+            // App icon missing from PackageManager: use its initial, never a generic rectangle.
+            symbolPaint.setStyle(Paint.Style.FILL); symbolPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            symbolPaint.setTextAlign(Paint.Align.CENTER); symbolPaint.setTextSize(dp(20));
+            symbolPaint.setColor(Color.WHITE);
+            if (label != null && !label.isEmpty()) c.drawText(label.substring(0,1).toUpperCase(displayLocale),x,y+dp(7),symbolPaint);
+            symbolPaint.setTextAlign(Paint.Align.LEFT);
+        }
+        private void drawMainSpecialIcon(Canvas c,float x,float y,int type) {
+            iconPaint.setColor(Color.WHITE);iconPaint.setStyle(Paint.Style.STROKE);
+            iconPaint.setStrokeWidth(dp(2));iconPaint.setStrokeCap(Paint.Cap.ROUND);
+            if (type == 0) { // All apps: 2 x 2 grid
+                for (int a=0;a<2;a++) for (int b=0;b<2;b++)
+                    c.drawRoundRect(x+dp(a*11-11),y+dp(b*11-11),x+dp(a*11-3),y+dp(b*11-3),dp(1.5f),dp(1.5f),iconPaint);
+            } else if (type == 1) { // Video input: monitor and connector
+                c.drawRoundRect(x-dp(12),y-dp(9),x+dp(12),y+dp(7),dp(2),dp(2),iconPaint);
+                c.drawLine(x,y+dp(7),x,y+dp(11),iconPaint);
+                c.drawLine(x-dp(7),y+dp(11),x+dp(7),y+dp(11),iconPaint);
+            } else { // Settings: sliders
+                for (int row=0;row<3;row++) {
+                    float yy=y+dp((row-1)*8);
+                    c.drawLine(x-dp(11),yy,x+dp(11),yy,iconPaint);
+                    float center=x+dp(row==1?5:-4);
+                    iconPaint.setStyle(Paint.Style.FILL);
+                    c.drawCircle(center,yy,dp(3),iconPaint);
+                    iconPaint.setStyle(Paint.Style.STROKE);
+                }
+            }
+        }
         private void drawRowIcon(Canvas c, float x, float y, int index) {
             if ("apps".equals(panel) && index < panelTargets.size()) {
                 if (drawInstalledIcon(c, panelTargets.get(index), x, y)) return;
@@ -1472,12 +1607,14 @@ public class MainActivity extends Activity {
         void reloadPreferences() {
             applyLanguage();
             links = loadLinks();
+            preloadInstalledIcons();
             for (LinkItem item : links) if (item.target.startsWith("app:")) item.label = resolveLinkLabel(item);
             if (selected > links.size() + 2) selected = links.size() + 2;
             targetScroll = selected;
             scroll = selected;
             animationFrom = selected;
             bgStyle = prefs.getInt("bg_style", 0);
+            if (bgStyle == 8 || bgStyle == 9) { bgStyle = 0; prefs.edit().putInt("bg_style", 0).apply(); }
             textSizeMode = prefs.getInt("text_size", 1);
             showDate = prefs.getBoolean("show_date", true);
             showTime = prefs.getBoolean("show_time", true);
@@ -1578,8 +1715,8 @@ public class MainActivity extends Activity {
                 float elapsed = now - panelEnterAt;
                 float progress = !prefs.getBoolean("menu_animations", true) ? 1f : Math.min(1f, elapsed / PANEL_TRANSITION_MS);
                 int cp = c.save();
-                c.clipRect(0,0,Math.min(w * .46f, dp(640))+dp(28),h);
-                c.translate(-(1f-progress)*dp(65), 0f);
+                c.clipRect(0f, 0f, w, h);
+                c.translate((panelOnRight() ? 1f : -1f)*(1f-progress)*dp(65), 0f);
                 drawPanel(c, w, h);
                 c.restoreToCount(cp);
                 panelTransitions = progress < 1f;
@@ -1595,8 +1732,8 @@ public class MainActivity extends Activity {
                     panelTargets.clear(); panelTargets.addAll(exitedTargets);
                     panelScroll = exitedScroll; panelFocus = exitedFocus;
                     int cp = c.save();
-                    c.clipRect(0,0,Math.min(w * .46f, dp(640))+dp(28),h);
-                    c.translate(-progress*dp(65),0f);
+                    c.clipRect(0f, 0f, w, h);
+                    c.translate((panelOnRight() ? 1f : -1f)*progress*dp(65),0f);
                     drawPanel(c,w,h);
                     c.restoreToCount(cp);
                     panel = original; panelRows.clear(); panelRows.addAll(originalRows);
@@ -1667,11 +1804,11 @@ public class MainActivity extends Activity {
             paint.setTextSize(dp(44));
             if (showTime) c.drawText(time, w - pad, dp(78), paint);
 
-            if (showDate && !"hidden".equals(prefs.getString("date_position", "top"))) {
-                String date = new SimpleDateFormat("EEEE, d MMMM", displayLocale).format(new Date());
+            if (showDate && !"hidden".equals(prefs.getString("date_position", "bottom"))) {
+                String date = new SimpleDateFormat("en".equals(displayLocale.getLanguage()) ? "EEEE, MMMM d" : "EEEE, d MMMM", displayLocale).format(new Date());
                 paint.setTextSize(dp(16));
                 paint.setAlpha(180);
-                c.drawText(capitalize(date), w - pad, ("bottom".equals(prefs.getString("date_position", "top")) ? h-dp(48) : dp(showTime ? 28 : 78)), paint);
+                c.drawText(capitalize(date), w - pad, ("bottom".equals(prefs.getString("date_position", "bottom")) ? dp(showTime ? 108 : 78) : dp(showTime ? 28 : 78)), paint);
             }
         }
 
@@ -1695,9 +1832,9 @@ public class MainActivity extends Activity {
             for (int i = 0; i < total; i++) {
                 float distance = i - scroll;
                 if (Math.abs(distance) > 4.4f) continue;
-                float focus = Math.max(0f, 1f - Math.abs(distance));
+                float focus = i == selected ? 1f : 0f;
                 float y = centerY + distance * row;
-                boolean zoomMain = !"selector".equals(prefs.getString("selection_style", "zoom"));
+                boolean zoomMain = !"selector".equals(prefs.getString("selection_style", "selector"));
                 float size = dp(baseSize) * (1f + (zoomMain ? 0.34f * focus : 0f));
                 float x = left;
                 int alpha = (int) (95 + 160 * Math.max(focus, Math.max(0f, 1f - Math.abs(distance) / 4f)));
@@ -1710,17 +1847,34 @@ public class MainActivity extends Activity {
                 paint.setShadowLayer(focus > 0.5f ? dp(18) : 0, 0, 0, 0x55000000);
                 String label = i == links.size() ? tr("Todas las apps") : i == links.size() + 1 ? tr("Entradas de vídeo") : i == links.size() + 2 ? tr("Ajustes") : links.get(i).label;
                 boolean menuIcons = prefs.getBoolean("menu_icons", true);
-                if (!zoomMain && focus > 0.02f) {
-                    overlay.setShader(null);overlay.setColor(0x668D9BAA);
-                    c.drawRoundRect(left-dp(14),y-row*.62f,w*.39f,y+row*.25f,dp(8),dp(8),overlay);
-                }
                 if (menuIcons) {
-                    float iconX = x + dp(14), iconY = y - dp(8);
+                    Paint.FontMetrics iconFontMetrics = paint.getFontMetrics();
+                    float iconX = x + dp(14), iconY = y + (iconFontMetrics.ascent + iconFontMetrics.descent) * 0.5f;
                     boolean drawn = false;
                     if (i < links.size() && links.get(i).target.startsWith("app:"))
                         drawn = drawInstalledIcon(c, links.get(i).target.substring(4), iconX, iconY);
-                    if (!drawn) drawPanelIcon(c,iconX,iconY,i >= links.size() ? 4+(i-links.size()) : 0);
+                    if (!drawn) {
+                        if (i >= links.size()) drawMainSpecialIcon(c, iconX, iconY, i-links.size());
+                        else drawAppFallback(c, iconX, iconY, label);
+                    }
                     x += dp(39);
+                }
+                if (!zoomMain && focus > 0.5f) {
+                    overlay.setShader(null); overlay.setColor(0x668D9BAA);
+                    Paint.FontMetrics fm = paint.getFontMetrics();
+                    float highlightEnd = Math.min(w - dp(15), x + paint.measureText(label) + dp(14));
+                    c.drawRoundRect(left-dp(14), y + fm.ascent - dp(11),
+                        Math.max(left+dp(35),highlightEnd), y + fm.descent + dp(11), dp(8), dp(8), overlay);
+                    // Redraw the icon on top of the selection background.
+                    if (menuIcons) {
+                        float iconY = y + (fm.ascent + fm.descent) * 0.5f;
+                        boolean drawn = i < links.size() && links.get(i).target.startsWith("app:")
+                            && drawInstalledIcon(c, links.get(i).target.substring(4), left + dp(14), iconY);
+                        if (!drawn) {
+                            if (i >= links.size()) drawMainSpecialIcon(c, left + dp(14), iconY, i-links.size());
+                            else drawAppFallback(c, left + dp(14), iconY, label);
+                        }
+                    }
                 }
                 c.drawText(label, x, y, paint);
                 paint.clearShadowLayer();
@@ -1769,6 +1923,9 @@ public class MainActivity extends Activity {
             // Una pulsación larga abre el editor, pero los eventos repetidos de OK
             // siguen llegando hasta soltar el mando: NO deben activar la primera fila.
             if (isOkKey(keyCode) && okPressed) return true;
+            if ((keyCode == KeyEvent.KEYCODE_1 || keyCode == KeyEvent.KEYCODE_NUMPAD_1) && event.getRepeatCount() == 0) {
+                saveLauncherScreenshot(); return true;
+            }
             if (keyCode == KeyEvent.KEYCODE_0 || keyCode == KeyEvent.KEYCODE_NUMPAD_0) {
                 if ("server".equals(panel)) { stopUploadServer(); openPanel("settings"); }
                 else startUploadServer();
