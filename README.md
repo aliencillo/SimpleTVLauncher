@@ -9,13 +9,13 @@ A lightweight, customizable Android TV launcher with a text-focused home screen,
 ## Screenshots
 
 ### Home
-![Simple TV Launcher home screen](home.png)
+![Simple TV Launcher home screen](screenshots/home.png)
 
 ### Settings
-![Simple TV Launcher settings](settings.png)
+![Simple TV Launcher settings](screenshots/settings.png)
 
 ### Web File Manager
-![Simple TV Launcher web file manager](server.png)
+![Simple TV Launcher web file manager](screenshots/server.png)
 
 ## Features
 
